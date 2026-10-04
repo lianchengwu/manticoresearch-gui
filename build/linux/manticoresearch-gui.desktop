@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=manticoresearch-gui
+Exec=manticoresearch-gui
+Icon=manticoresearch-gui
+Categories=Development;
+Terminal=false
+Keywords=wails
+Version=1.0
+StartupNotify=false
