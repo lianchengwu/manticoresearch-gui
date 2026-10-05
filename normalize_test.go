@@ -67,6 +67,19 @@ func TestNormalizeBodyColumnsData(t *testing.T) {
 		t.Fatalf("rows = %v", res.Rows)
 	}
 }
+func TestNormalizeBodySQLEnvelopeArray(t *testing.T) {
+	body := []byte(`[{"columns":[{"Table":{"type":"string"}},{"Type":{"type":"string"}}],"data":[{"Table":"products","Type":"rt"},{"Table":"alerts","Type":"percolate"}],"total":2,"error":"","warning":""}]`)
+	res := normalizeBody(body)
+	if res.Error != "" {
+		t.Fatal(res.Error)
+	}
+	if len(res.Columns) != 2 || res.Columns[0] != "Table" || res.Columns[1] != "Type" {
+		t.Fatalf("columns = %v", res.Columns)
+	}
+	if len(res.Rows) != 2 || res.Rows[0][0] != "products" || res.Rows[0][1] != "rt" || res.Rows[1][0] != "alerts" {
+		t.Fatalf("rows = %#v", res.Rows)
+	}
+}
 
 func TestNormalizeBodyErrorObjectAndText(t *testing.T) {
 	res := normalizeBody([]byte(`{"error":"P01: syntax error, unexpected X"}`))

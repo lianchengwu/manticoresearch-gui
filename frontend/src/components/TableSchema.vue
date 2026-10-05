@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { toast, useSessionId } from '../stores/app'
+import { tableTick, toast, useSessionId } from '../stores/app'
 import { TableService, errText } from '../lib/api'
 import type { QueryResult } from '../lib/types'
 import DataGrid from './DataGrid.vue'
+import TableActionMenu from './TableActionMenu.vue'
+import { openDesignTable } from './tabledesigner'
 
 const props = defineProps<{ table: string }>()
 const connId = useSessionId()
@@ -35,11 +37,20 @@ async function load() {
 }
 
 watch(() => props.table, load)
+watch(() => tableTick.n, () => {
+  if (!tableTick.table || tableTick.table === props.table) load()
+})
 onMounted(load)
 </script>
 
 <template>
   <div class="schema">
+    <div class="schema-bar">
+      <button class="btn sm primary" @click="openDesignTable(connId, table)">设计表</button>
+      <button class="btn sm" @click="load">刷新</button>
+      <span class="flex1"></span>
+      <TableActionMenu :table="table" />
+    </div>
     <div class="schema-grid">
       <div class="schema-section">
         <div class="section-label">字段</div>
@@ -55,6 +66,15 @@ onMounted(load)
 
 <style scoped>
 .schema { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.schema-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  flex: none;
+}
+.flex1 { flex: 1; }
 .schema-grid {
   flex: 1;
   display: grid;

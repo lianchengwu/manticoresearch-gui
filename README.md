@@ -9,6 +9,9 @@
 - **SQL 控制台** — 执行任意 Manticore SQL(`Ctrl+Enter` / `F8` 运行),查询历史(本地持久化),结果网格保留服务端列顺序
 - **表浏览** — 侧边栏列出所有表(类型徽标:rt / percolate / distributed…),数据浏览支持全文检索(query_string)、排序、分页
 - **文档管理** — 通过 Index API 插入 / 替换 / 删除文档,JSON 编辑器,行详情抽屉
+- **建表** — 可视化设计实时表 / 渗滤表 / 分布式表，预览并执行 `CREATE TABLE`，也可直接改 SQL
+- **设计表** — 对已有表新增 / 删除字段、把 int 扩成 bigint、修改全文设置、重命名，变更以 `ALTER` 逐条应用
+- **表操作** — 侧栏右键或「操作」菜单：优化磁盘块、刷出内存块、强制落盘、状态、设置、复制结构、清空、删除
 - **表结构** — `DESCRIBE` 字段网格 + `SHOW CREATE TABLE` 建表语句
 - **集群模式** — 连接可配置多个 Manticore 节点,请求轮询分发,节点故障自动转移
 - **网络链路拓扑** — HTTP 代理、SOCKS5 代理、SSH 隧道可**混合编排为任意顺序的穿透链**(本机 → 跳 1 → 跳 2 → … → Manticore),支持启停、排序、SSH 私钥/密码认证、TOFU 主机密钥校验
@@ -48,12 +51,13 @@ connection.go      连接管理(持久化到 ~/.config/manticoresearch-gui/)+ �
 netdial.go         网络层:HTTP/SOCKS5/SSH 混合穿透链 + 集群轮询故障转移
 query.go           SQL 执行(UtilsAPI.Sql)
 table.go           表与文档服务(SearchAPI / IndexAPI / SQL)
+ddl.go             建表 / 改表 SQL 生成与校验
 normalize.go       响应归一化:保序 JSON 解析,统一各种响应形状为 QueryResult
 frontend/
   src/lib/api.ts   绑定类型收敛层
   src/stores/      轻量响应式状态仓库
   src/components/  TitleBar / Sidebar / SqlConsole / TableData / TableSchema /
-                   DataGrid / ConnectionModal / DocModal / Toasts / ConfirmModal
+                   TableDesigner / DataGrid / ConnectionModal / DocModal / Toasts / ConfirmModal
 ```
 
 ### 网络链路语义

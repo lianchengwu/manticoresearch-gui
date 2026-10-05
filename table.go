@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +14,8 @@ import (
 	openapi "github.com/manticoresoftware/manticoresearch-go"
 )
 
-// TableService covers table inspection and document CRUD. Browsing uses the
-// Search API (DSL), writes use the Index API, schema uses SQL endpoints.
+// TableService covers table inspection, DDL, and document CRUD. Browsing uses
+// the Search API, writes use the Index API, schema changes use SQL.
 type TableService struct{}
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -40,29 +41,51 @@ func (t TableService) ListTables(connID string) ([]TableInfo, error) {
 	if res.Error != "" {
 		return nil, errors.New(res.Error)
 	}
-	typeCol := -1
-	for i, c := range res.Columns {
-		if strings.EqualFold(c, "type") {
-			typeCol = i
-			break
-		}
+	nameCol := columnIndex(res.Columns, "table", "index", "name")
+	if nameCol < 0 {
+		nameCol = 0
 	}
-	if typeCol < 0 && len(res.Columns) > 1 {
-		typeCol = 1
-	}
+	typeCol := columnIndex(res.Columns, "type")
 	tables := make([]TableInfo, 0, len(res.Rows))
 	for _, row := range res.Rows {
-		if len(row) == 0 {
+		if nameCol >= len(row) {
 			continue
 		}
-		name := fmt.Sprintf("%v", row[0])
-		typ := ""
-		if typeCol > 0 && typeCol < len(row) && row[typeCol] != nil {
-			typ = fmt.Sprintf("%v", row[typeCol])
+		name, ok := scalarString(row[nameCol])
+		if !ok || strings.TrimSpace(name) == "" {
+			continue
 		}
-		tables = append(tables, TableInfo{Name: name, Type: typ})
+		typ := ""
+		if typeCol >= 0 && typeCol < len(row) {
+			typ, _ = scalarString(row[typeCol])
+		}
+		tables = append(tables, TableInfo{Name: strings.TrimSpace(name), Type: typ})
 	}
 	return tables, nil
+}
+
+func columnIndex(cols []string, names ...string) int {
+	for i, c := range cols {
+		for _, n := range names {
+			if strings.EqualFold(c, n) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func scalarString(v any) (string, bool) {
+	switch x := v.(type) {
+	case string:
+		return x, true
+	case json.Number:
+		return x.String(), true
+	case float64, float32, int, int64, int32, uint64, bool:
+		return fmt.Sprint(x), true
+	default:
+		return "", false
+	}
 }
 
 // DescribeTable returns the schema (DESCRIBE) of a table.
@@ -99,6 +122,125 @@ func (t TableService) DropTable(connID, table string) (*QueryResult, error) {
 		return nil, err
 	}
 	return runSQL(conn, "DROP TABLE "+quoteIdent(table))
+}
+
+// RenderCreateTable returns the CREATE statement for a designer spec.
+func (t TableService) RenderCreateTable(spec CreateTableSpec) *SQLPreview {
+	sql, err := BuildCreateTable(spec)
+	if err != nil {
+		return previewErr(err)
+	}
+	return previewOK([]string{sql})
+}
+
+// CreateTable executes a designer spec.
+func (t TableService) CreateTable(connID string, spec CreateTableSpec) (*QueryResult, error) {
+	sql, err := BuildCreateTable(spec)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := connStore.get(connID)
+	if err != nil {
+		return nil, err
+	}
+	return runSQL(conn, sql)
+}
+
+// RenderSchemaChanges returns the ALTER statements for a design session.
+func (t TableService) RenderSchemaChanges(table string, changes []SchemaChange) *SQLPreview {
+	sqls, err := BuildSchemaChanges(table, changes)
+	if err != nil {
+		return previewErr(err)
+	}
+	return previewOK(sqls)
+}
+
+// ApplySchema runs ALTER statements in order and stops at the first error.
+// Statements before the failure are already applied.
+func (t TableService) ApplySchema(connID, table string, changes []SchemaChange) (*SchemaApplyResult, error) {
+	sqls, err := BuildSchemaChanges(table, changes)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := connStore.get(connID)
+	if err != nil {
+		return nil, err
+	}
+	out := &SchemaApplyResult{Total: len(sqls)}
+	for _, sql := range sqls {
+		res, err := runSQL(conn, sql)
+		if err != nil {
+			out.Error = err.Error()
+			out.FailedSQL = sql
+			return out, nil
+		}
+		if res.Error != "" {
+			out.Error = res.Error
+			out.FailedSQL = sql
+			return out, nil
+		}
+		out.Applied++
+	}
+	out.Message = fmt.Sprintf("已执行 %d 条变更", out.Applied)
+	return out, nil
+}
+
+// OptimizeTable merges disk chunks.
+func (t TableService) OptimizeTable(connID, table string) (*QueryResult, error) {
+	return t.execIdent(connID, table, "OPTIMIZE TABLE "+quoteIdent(table))
+}
+
+// FlushRamchunk converts the RAM chunk into a new disk chunk.
+func (t TableService) FlushRamchunk(connID, table string) (*QueryResult, error) {
+	return t.execIdent(connID, table, "FLUSH RAMCHUNK "+quoteIdent(table))
+}
+
+// FlushTable forces the RAM chunk to disk without rotating it.
+func (t TableService) FlushTable(connID, table string) (*QueryResult, error) {
+	return t.execIdent(connID, table, "FLUSH TABLE "+quoteIdent(table))
+}
+
+// ShowTableStatus returns SHOW TABLE … STATUS.
+func (t TableService) ShowTableStatus(connID, table string) (*QueryResult, error) {
+	return t.execIdent(connID, table, "SHOW TABLE "+quoteIdent(table)+" STATUS")
+}
+
+// ShowTableSettings returns SHOW TABLE … SETTINGS.
+func (t TableService) ShowTableSettings(connID, table string) (*QueryResult, error) {
+	return t.execIdent(connID, table, "SHOW TABLE "+quoteIdent(table)+" SETTINGS")
+}
+
+// RenameTable renames a real-time table.
+func (t TableService) RenameTable(connID, table, newName string) (*QueryResult, error) {
+	newName, err := checkIdent(newName, "新表名")
+	if err != nil {
+		return nil, err
+	}
+	return t.execIdent(connID, table, "ALTER TABLE "+quoteIdent(table)+" RENAME "+quoteIdent(newName))
+}
+
+// CreateTableLike copies a table schema, optionally with data.
+func (t TableService) CreateTableLike(connID, name, like string, withData bool) (*QueryResult, error) {
+	sql, err := buildCreateLike(name, like, withData)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := connStore.get(connID)
+	if err != nil {
+		return nil, err
+	}
+	return runSQL(conn, sql)
+}
+
+func (t TableService) execIdent(connID, table, sql string) (*QueryResult, error) {
+	if _, err := checkIdent(table, "表名"); err != nil {
+		return nil, err
+	}
+	conn, err := connStore.get(connID)
+	if err != nil {
+		return nil, err
+	}
+	return runSQL(conn, sql)
 }
 
 // BrowseDocuments lists documents with pagination, optional full-text query

@@ -241,6 +241,28 @@ func fillTableFromArray(res *QueryResult, n *onode) {
 		res.Message = "OK (0 rows)"
 		return
 	}
+	// /sql?raw_response=1 returns a one-element array of {columns, data, error, warning}.
+	// Treating that object as a row hides every real table from the sidebar.
+	if isSQLResultSet(n.arr[0]) {
+		fillTableFromObject(res, n.arr[0])
+		for _, el := range n.arr[1:] {
+			if !isSQLResultSet(el) {
+				continue
+			}
+			partial := &QueryResult{}
+			fillTableFromObject(partial, el)
+			if partial.Error != "" {
+				res.Error = partial.Error
+			}
+			switch {
+			case res.Columns == nil:
+				res.Columns, res.Rows = partial.Columns, partial.Rows
+			case sameColumns(res.Columns, partial.Columns):
+				res.Rows = append(res.Rows, partial.Rows...)
+			}
+		}
+		return
+	}
 	objs := true
 	for _, el := range n.arr {
 		if !el.isObj {
@@ -259,6 +281,15 @@ func fillTableFromArray(res *QueryResult, n *onode) {
 	if len(res.Rows) == 0 {
 		res.Message = "OK (0 rows)"
 	}
+}
+
+func isSQLResultSet(n *onode) bool {
+	if n == nil || !n.isObj {
+		return false
+	}
+	cols := n.get("columns")
+	data := n.get("data")
+	return cols != nil && cols.arr != nil && data != nil && data.arr != nil
 }
 
 // fillTableFromObject dispatches on the known response shapes.

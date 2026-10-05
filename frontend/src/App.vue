@@ -7,6 +7,8 @@ import ConnectionModal from './components/ConnectionModal.vue'
 import DocModal from './components/DocModal.vue'
 import Toasts from './components/Toasts.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
+import TableDesigner from './components/TableDesigner.vue'
+import TableOpsHost from './components/TableOpsHost.vue'
 
 const focused = computed(() => sessionOf(store.activeId))
 const focusedConn = computed(() => connById(store.activeId))
@@ -60,6 +62,8 @@ onMounted(loadConnections)
   <ConnectionModal />
   <DocModal />
   <ConfirmModal />
+  <TableDesigner />
+  <TableOpsHost />
   <Toasts />
 </template>
 

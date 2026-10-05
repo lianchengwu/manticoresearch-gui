@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { toast, confirmBox, closeTab, refreshTables, useSession, useSessionId } from '../stores/app'
+import { tableTick, toast, confirmBox, useSessionId } from '../stores/app'
 import { TableService, errText } from '../lib/api'
+import { dropTable, truncateTable } from '../lib/tableops'
 import type { QueryResult } from '../lib/types'
 import DataGrid from './DataGrid.vue'
+import TableActionMenu from './TableActionMenu.vue'
 import { openDocModal } from './docmodal'
 
 const props = defineProps<{ table: string }>()
-const sess = useSession()
 const connId = useSessionId()
+
 
 const result = ref<QueryResult | null>(null)
 const loading = ref(false)
@@ -125,33 +127,22 @@ async function deleteSelected() {
 }
 
 async function truncate() {
-  const ok = await confirmBox(`清空表 ${props.table} 的全部文档?此操作不可撤销。`, 'TRUNCATE TABLE')
-  if (!ok) return
-  try {
-    await TableService.TruncateTable(connId.value, props.table)
-    toast('表已清空', 'success')
+  if (await truncateTable(connId.value, props.table)) {
     page.value = 0
     load()
-    refreshTables(connId.value)
-  } catch (e) {
-    toast(errText(e), 'error')
   }
 }
 
 async function drop() {
-  const ok = await confirmBox(`删除表 ${props.table}?此操作不可撤销。`, 'DROP TABLE')
-  if (!ok) return
-  try {
-    await TableService.DropTable(connId.value, props.table)
-    toast('表已删除', 'success')
-    closeTab('table:' + props.table, connId.value)
-    refreshTables(connId.value)
-  } catch (e) {
-    toast(errText(e), 'error')
-  }
+  await dropTable(connId.value, props.table)
 }
 
 watch(() => props.table, load)
+watch(() => tableTick.n, () => {
+  if (tableTick.table && tableTick.table !== props.table) return
+  page.value = 0
+  load()
+})
 onMounted(load)
 </script>
 
@@ -165,6 +156,7 @@ onMounted(load)
       </form>
       <span class="flex1"></span>
       <button class="btn sm" @click="openDocModal({ mode: 'insert', table, docText: '{}', connId: connId, onDone: load })">＋ 插入文档</button>
+      <TableActionMenu :table="table" />
       <button class="btn ghost sm" title="刷新" @click="load()">⟳</button>
       <button class="btn danger sm" title="清空表" @click="truncate">清空</button>
       <button class="btn danger sm" title="删除表" @click="drop">删表</button>

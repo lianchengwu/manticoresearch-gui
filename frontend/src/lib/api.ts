@@ -7,8 +7,12 @@ import * as $table from '../../bindings/manticoresearch-gui/tableservice.js'
 import type {
   BrowseOptions,
   Connection,
+  CreateTableSpec,
   MutationResult,
   QueryResult,
+  SchemaApplyResult,
+  SchemaChange,
+  SQLPreview,
   TableInfo,
   TestResult,
 } from './types'
@@ -77,6 +81,28 @@ export const TableService = {
     $table.UpdateDocument(connID, table, id, doc as any) as unknown as Promise<MutationResult | null>,
   DeleteDocument: (connID: string, table: string, id: string): Promise<MutationResult | null> =>
     $table.DeleteDocument(connID, table, id) as unknown as Promise<MutationResult | null>,
+  RenderCreateTable: (spec: CreateTableSpec): Promise<SQLPreview | null> =>
+    $table.RenderCreateTable(spec) as unknown as Promise<SQLPreview | null>,
+  CreateTable: (connID: string, spec: CreateTableSpec): Promise<QueryResult | null> =>
+    fixQR($table.CreateTable(connID, spec)),
+  RenderSchemaChanges: (table: string, changes: SchemaChange[]): Promise<SQLPreview | null> =>
+    $table.RenderSchemaChanges(table, changes) as unknown as Promise<SQLPreview | null>,
+  ApplySchema: (connID: string, table: string, changes: SchemaChange[]): Promise<SchemaApplyResult | null> =>
+    $table.ApplySchema(connID, table, changes) as unknown as Promise<SchemaApplyResult | null>,
+  OptimizeTable: (connID: string, table: string): Promise<QueryResult | null> =>
+    fixQR($table.OptimizeTable(connID, table)),
+  FlushRamchunk: (connID: string, table: string): Promise<QueryResult | null> =>
+    fixQR($table.FlushRamchunk(connID, table)),
+  FlushTable: (connID: string, table: string): Promise<QueryResult | null> =>
+    fixQR($table.FlushTable(connID, table)),
+  ShowTableStatus: (connID: string, table: string): Promise<QueryResult | null> =>
+    fixQR($table.ShowTableStatus(connID, table)),
+  ShowTableSettings: (connID: string, table: string): Promise<QueryResult | null> =>
+    fixQR($table.ShowTableSettings(connID, table)),
+  RenameTable: (connID: string, table: string, newName: string): Promise<QueryResult | null> =>
+    fixQR($table.RenameTable(connID, table, newName)),
+  CreateTableLike: (connID: string, name: string, like: string, withData: boolean): Promise<QueryResult | null> =>
+    fixQR($table.CreateTableLike(connID, name, like, withData)),
 }
 
 export function errText(e: unknown): string {

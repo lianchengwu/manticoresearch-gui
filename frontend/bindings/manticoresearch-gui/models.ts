@@ -22,6 +22,26 @@ export interface BrowseOptions {
 }
 
 /**
+ * ColumnDef is one column in CREATE TABLE or ALTER TABLE ADD COLUMN.
+ */
+export interface ColumnDef {
+    "name": string;
+    "type": string;
+    "indexed": boolean;
+    "stored": boolean;
+    "attribute": boolean;
+
+    /**
+     * "", "columnar", "rowwise"
+     */
+    "engine": string;
+    "secondaryIndex": boolean;
+    "knnType": string;
+    "knnDims": number;
+    "hnswSimilarity": string;
+}
+
+/**
  * Connection describes a saved Manticore Search server connection.
  */
 export interface Connection {
@@ -55,6 +75,38 @@ export interface Connection {
      * pre-chain configs, migrated on load
      */
     "net"?: legacyNet | null;
+}
+
+/**
+ * CreateTableSpec is the visual designer's create request.
+ */
+export interface CreateTableSpec {
+    "name": string;
+    "ifNotExists": boolean;
+
+    /**
+     * rt | pq | distributed
+     */
+    "kind": string;
+    "columns": ColumnDef[] | null;
+    "options": OptionPair[] | null;
+    "members": DistMember[] | null;
+
+    /**
+     * table-level columnar
+     */
+    "engine": string;
+}
+
+/**
+ * DistMember is one local= or agent= clause of a distributed table.
+ */
+export interface DistMember {
+    /**
+     * local | agent
+     */
+    "kind": string;
+    "value": string;
 }
 
 /**
@@ -105,6 +157,14 @@ export interface NodeAddress {
     "port": number;
 }
 
+/**
+ * OptionPair is one table setting, rendered as name='value'.
+ */
+export interface OptionPair {
+    "name": string;
+    "value": string;
+}
+
 export interface ProxyHop {
     "type": string;
     "host": string;
@@ -124,6 +184,38 @@ export interface QueryResult {
     "tookMs": number;
     "message"?: string;
     "error"?: string;
+}
+
+/**
+ * SQLPreview is a rendered statement that was not executed.
+ */
+export interface SQLPreview {
+    "sql": string;
+    "sqls": string[] | null;
+    "error": string;
+}
+
+/**
+ * SchemaApplyResult is the outcome of a batch of ALTER statements.
+ * Applied counts statements that succeeded before the first failure.
+ */
+export interface SchemaApplyResult {
+    "applied": number;
+    "total": number;
+    "error": string;
+    "failedSql": string;
+    "message": string;
+}
+
+/**
+ * SchemaChange is one pending ALTER against an existing table.
+ * Action is add, drop, modify, setting, or rename.
+ */
+export interface SchemaChange {
+    "action": string;
+    "column": ColumnDef;
+    "newName": string;
+    "settings": OptionPair[] | null;
 }
 
 /**

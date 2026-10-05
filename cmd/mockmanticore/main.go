@@ -73,8 +73,8 @@ func (s *server) sql(w http.ResponseWriter, q string) {
 	switch {
 	case contains(q, "version()"):
 		fmt.Fprint(w, `[{"version()":"9.2.14-mock"}]`)
-	case q == "SHOW TABLES":
-		fmt.Fprint(w, `[{"Index":"products","Type":"rt"},{"Index":"alerts","Type":"percolate"}]`)
+	case q == "SHOW TABLES" || (len(q) >= 11 && q[:11] == "SHOW TABLES"):
+		fmt.Fprint(w, `[{"columns":[{"Table":{"type":"string"}},{"Type":{"type":"string"}}],"data":[{"Table":"products","Type":"rt"},{"Table":"alerts","Type":"percolate"}],"total":2,"error":"","warning":""}]`)
 	case len(q) >= 8 && q[:8] == "DESCRIBE":
 		fmt.Fprint(w, `{"columns":[{"Field":{"type":"string"}},{"Type":{"type":"string"}},{"Properties":{"type":"string"}}],"data":[`+
 			`{"Field":"id","Type":"bigint","Properties":""},`+

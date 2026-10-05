@@ -12,12 +12,19 @@ export {
 
 export type {
     BrowseOptions,
+    ColumnDef,
     Connection,
+    CreateTableSpec,
+    DistMember,
     Hop,
     MutationResult,
     NodeAddress,
+    OptionPair,
     ProxyHop,
     QueryResult,
+    SQLPreview,
+    SchemaApplyResult,
+    SchemaChange,
     TableInfo,
     TestResult
 } from "./models.js";

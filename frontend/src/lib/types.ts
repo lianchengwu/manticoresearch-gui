@@ -58,6 +58,59 @@ export interface BrowseOptions {
 export interface MutationResult {
   message: string
 }
+export interface ColumnDef {
+  name: string
+  type: string
+  indexed: boolean
+  stored: boolean
+  attribute: boolean
+  engine: string
+  secondaryIndex: boolean
+  knnType: string
+  knnDims: number
+  hnswSimilarity: string
+}
+
+export interface OptionPair {
+  name: string
+  value: string
+}
+
+export interface DistMember {
+  kind: 'local' | 'agent' | string
+  value: string
+}
+
+export interface CreateTableSpec {
+  name: string
+  ifNotExists: boolean
+  kind: string
+  columns: ColumnDef[]
+  options: OptionPair[]
+  members: DistMember[]
+  engine: string
+}
+
+export interface SchemaChange {
+  action: 'add' | 'drop' | 'modify' | 'setting' | 'rename' | string
+  column: ColumnDef
+  newName: string
+  settings: OptionPair[]
+}
+
+export interface SQLPreview {
+  sql: string
+  sqls: string[]
+  error: string
+}
+
+export interface SchemaApplyResult {
+  applied: number
+  total: number
+  error: string
+  failedSql: string
+  message: string
+}
 
 export interface TestResult {
   version: string

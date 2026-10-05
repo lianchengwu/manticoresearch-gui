@@ -241,17 +241,42 @@ export async function refreshTables(connId = store.activeId) {
   }
 }
 
-export function openTableTab(table: string, connId = store.activeId) {
+export const tableTick = reactive({ n: 0, table: '' })
+
+export function bumpTable(table = '') {
+  tableTick.n++
+  tableTick.table = table
+}
+
+export function openTableTab(table: string, connId = store.activeId, view?: Tab['view']) {
   const sess = store.sessions[connId]
   if (!sess) return
   const id = 'table:' + table
   let tab = sess.tabs.find((t) => t.id === id)
   if (!tab) {
-    tab = { id, kind: 'table', table, view: 'data' }
+    tab = { id, kind: 'table', table, view: view ?? 'data' }
     sess.tabs.push(tab)
+  } else if (view) {
+    tab.view = view
   }
   sess.activeTabId = id
   store.activeId = connId
+}
+
+export function retargetTableTab(oldName: string, newName: string, connId = store.activeId) {
+  const sess = store.sessions[connId]
+  if (!sess || !newName || oldName === newName) return
+  const oldId = 'table:' + oldName
+  const newId = 'table:' + newName
+  const tab = sess.tabs.find((t) => t.id === oldId)
+  if (!tab) return
+  if (sess.tabs.some((t) => t.id === newId)) {
+    closeTab(oldId, connId)
+    return
+  }
+  tab.id = newId
+  tab.table = newName
+  if (sess.activeTabId === oldId) sess.activeTabId = newId
 }
 
 export function closeTab(id: string, connId = store.activeId) {

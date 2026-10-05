@@ -70,10 +70,10 @@ func (m *mockManticore) sql(w http.ResponseWriter, q string) {
 	case strings.HasPrefix(q, "SELECT version()"):
 		fmt.Fprint(w, `[{"version()":"9.2.14"}]`)
 	case strings.HasPrefix(q, "SHOW TABLES"):
-		fmt.Fprint(w, `[{"Index":"products","Type":"rt"},{"Index":"alerts","Type":"percolate"}]`)
+		fmt.Fprint(w, `[{"columns":[{"Table":{"type":"string"}},{"Type":{"type":"string"}}],"data":[{"Table":"products","Type":"rt"},{"Table":"alerts","Type":"percolate"}],"total":2,"error":"","warning":""}]`)
 	case strings.HasPrefix(q, "DESCRIBE"):
 		fmt.Fprint(w, `{"columns":[{"Field":{"type":"string"}},{"Type":{"type":"string"}},{"Properties":{"type":"string"}}],"data":[{"Field":"title","Type":"text","Properties":"indexed"},{"Field":"price","Type":"float","Properties":""}]}`)
-	case strings.Contains(q, "syntax error"):
+	case strings.Contains(q, "syntax error"), strings.Contains(q, "FAILCOL"):
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `{"error":"P01: syntax error, unexpected identifier near 'BOGUS'"}`)
 	default:
@@ -241,6 +241,52 @@ func TestDescribeTable(t *testing.T) {
 	}
 	if len(res.Rows) != 2 || res.Rows[0][0] != "title" {
 		t.Fatalf("rows = %v", res.Rows)
+	}
+}
+func TestCreateTableSendsBuiltSQL(t *testing.T) {
+	m := newMockManticore(t, "", "")
+	id := registerConn(t, newTestConn(m))
+	res, err := TableService{}.CreateTable(id, CreateTableSpec{
+		Name:    "demo",
+		Columns: []ColumnDef{{Name: "title", Type: "text", Indexed: true, Stored: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Error != "" {
+		t.Fatal(res.Error)
+	}
+	if len(m.sqlBodies) == 0 || !strings.Contains(m.sqlBodies[len(m.sqlBodies)-1], "CREATE TABLE `demo` (`title` text)") {
+		t.Fatalf("sql bodies: %#v", m.sqlBodies)
+	}
+	applied, err := TableService{}.ApplySchema(id, "demo", []SchemaChange{
+		{Action: "add", Column: ColumnDef{Name: "price", Type: "float"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.Error != "" || applied.Applied != 1 {
+		t.Fatalf("%+v", applied)
+	}
+	if !strings.Contains(m.sqlBodies[len(m.sqlBodies)-1], "ALTER TABLE `demo` ADD COLUMN `price` float") {
+		t.Fatalf("sql bodies: %#v", m.sqlBodies)
+	}
+	opt, err := TableService{}.OptimizeTable(id, "demo")
+	if err != nil || opt.Error != "" {
+		t.Fatalf("optimize err=%v res=%+v", err, opt)
+	}
+	if !strings.Contains(m.sqlBodies[len(m.sqlBodies)-1], "OPTIMIZE TABLE `demo`") {
+		t.Fatalf("sql bodies: %#v", m.sqlBodies)
+	}
+	partial, err := TableService{}.ApplySchema(id, "demo", []SchemaChange{
+		{Action: "add", Column: ColumnDef{Name: "okcol", Type: "int"}},
+		{Action: "add", Column: ColumnDef{Name: "FAILCOL", Type: "int"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial.Applied != 1 || partial.Error == "" || !strings.Contains(partial.FailedSQL, "FAILCOL") {
+		t.Fatalf("partial apply: %+v", partial)
 	}
 }
 
