@@ -1,13 +1,24 @@
 package main
 
 import (
+	"bufio"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+	"manticoresearch-gui/internal/dialer"
 )
 
 // mockManticore mimics the Manticore Search HTTP endpoints the SDK uses.
@@ -142,12 +153,17 @@ func mustPort(s string) int {
 // the assigned id.
 func registerConn(t *testing.T, c *Connection) string {
 	t.Helper()
-	configDirOverride = t.TempDir()
+	dir := t.TempDir()
+	dialer.SetConfigDir(dir)
 	saved, err := connStore.upsert(*c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = connStore.remove(saved.ID) })
+	t.Cleanup(func() {
+		dialer.SetConfigDir(dir)
+		_ = connStore.remove(saved.ID)
+		dialer.SetConfigDir("")
+	})
 	return saved.ID
 }
 
@@ -344,5 +360,339 @@ func TestBasicAuthReachMock(t *testing.T) {
 	res2, err := QueryService{}.ExecuteSQL(id2, "SELECT version()")
 	if err != nil || res2.Error == "" {
 		t.Fatalf("expected unauthorized error, got err=%v res=%+v", err, res2)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Proxy & SSH TestConnection integration tests
+
+func hostOf(addr string) string {
+	h, _, _ := net.SplitHostPort(addr)
+	return h
+}
+
+func portOf(addr string) int {
+	_, p, _ := net.SplitHostPort(addr)
+	n, _ := strconv.Atoi(p)
+	return n
+}
+
+func testSigner(t *testing.T) ssh.Signer {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signer
+}
+
+type sshTestServer struct {
+	ln     net.Listener
+	cfg    *ssh.ServerConfig
+	closed chan struct{}
+}
+
+func startSSHServer(t *testing.T) *sshTestServer {
+	t.Helper()
+	cfg := &ssh.ServerConfig{
+		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+			if c.User() == "test" && string(pass) == "secret" {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("denied")
+		},
+	}
+	cfg.AddHostKey(testSigner(t))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &sshTestServer{ln: ln, cfg: cfg, closed: make(chan struct{})}
+	t.Cleanup(func() {
+		ln.Close()
+		select {
+		case <-s.closed:
+		case <-time.After(2 * time.Second):
+		}
+	})
+	go s.serve()
+	return s
+}
+
+func (s *sshTestServer) addr() string { return s.ln.Addr().String() }
+
+func (s *sshTestServer) serve() {
+	defer close(s.closed)
+	for {
+		tcp, err := s.ln.Accept()
+		if err != nil {
+			return
+		}
+		go s.handle(tcp)
+	}
+}
+
+func (s *sshTestServer) handle(tcp net.Conn) {
+	conn, chans, reqs, err := ssh.NewServerConn(tcp, s.cfg)
+	if err != nil {
+		tcp.Close()
+		return
+	}
+	defer conn.Close()
+	go ssh.DiscardRequests(reqs)
+	for ch := range chans {
+		if ch.ChannelType() != "direct-tcpip" {
+			ch.Reject(ssh.UnknownChannelType, ch.ChannelType())
+			continue
+		}
+		var extra struct {
+			Host     string
+			Port     uint32
+			OrigHost string
+			OrigPort uint32
+		}
+		if err := ssh.Unmarshal(ch.ExtraData(), &extra); err != nil {
+			ch.Reject(ssh.ConnectionFailed, err.Error())
+			continue
+		}
+		backend, err := net.DialTimeout("tcp", net.JoinHostPort(extra.Host, fmt.Sprint(extra.Port)), 3*time.Second)
+		if err != nil {
+			ch.Reject(ssh.ConnectionFailed, err.Error())
+			continue
+		}
+		channel, reqs, err := ch.Accept()
+		if err != nil {
+			backend.Close()
+			continue
+		}
+		go ssh.DiscardRequests(reqs)
+		go func() {
+			defer channel.Close()
+			defer backend.Close()
+			go func() { _, _ = io.Copy(channel, backend); channel.CloseWrite() }()
+			_, _ = io.Copy(backend, channel)
+		}()
+	}
+}
+
+func httpConnectProxy(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				br := bufio.NewReader(c)
+				req, err := http.ReadRequest(br)
+				if err != nil || req.Method != http.MethodConnect {
+					return
+				}
+				up, err := net.Dial("tcp", req.RequestURI)
+				if err != nil {
+					c.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+					return
+				}
+				defer up.Close()
+				c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+				go io.Copy(up, c)
+				io.Copy(c, up)
+			}(conn)
+		}
+	}()
+	return ln.Addr().String()
+}
+
+type mockSocksServer struct {
+	ln net.Listener
+}
+
+func newMockSocks(t *testing.T) *mockSocksServer {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &mockSocksServer{ln: ln}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				head := make([]byte, 2)
+				if _, err := io.ReadFull(c, head); err != nil {
+					return
+				}
+				methods := make([]byte, head[1])
+				if _, err := io.ReadFull(c, methods); err != nil {
+					return
+				}
+				c.Write([]byte{0x05, 0x00}) // no auth
+
+				req := make([]byte, 4)
+				if _, err := io.ReadFull(c, req); err != nil {
+					return
+				}
+				var host string
+				switch req[3] {
+				case 0x01: // IPv4
+					ip := make([]byte, 4)
+					io.ReadFull(c, ip)
+					host = net.IP(ip).String()
+				case 0x03: // domain
+					l := make([]byte, 1)
+					io.ReadFull(c, l)
+					dom := make([]byte, l[0])
+					io.ReadFull(c, dom)
+					host = string(dom)
+				default:
+					return
+				}
+				portB := make([]byte, 2)
+				io.ReadFull(c, portB)
+				port := int(portB[0])<<8 | int(portB[1])
+				target := net.JoinHostPort(host, fmt.Sprint(port))
+
+				up, err := net.Dial("tcp", target)
+				if err != nil {
+					c.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+					return
+				}
+				defer up.Close()
+				c.Write([]byte{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0})
+				go io.Copy(up, c)
+				io.Copy(c, up)
+			}(conn)
+		}
+	}()
+	return s
+}
+
+func (s *mockSocksServer) addr() string { return s.ln.Addr().String() }
+
+func testConnectionThroughHop(t *testing.T, hop Hop) {
+	t.Helper()
+	m := newMockManticore(t, "", "")
+	c := *newTestConn(m)
+	c.Hops = []Hop{hop}
+	done := make(chan error, 1)
+	go func() {
+		r, err := ConnectionService{}.TestConnection(c)
+		if err != nil {
+			done <- err
+			return
+		}
+		if r == nil || r.Version != "9.2.14" {
+			done <- fmt.Errorf("result = %+v", r)
+			return
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("TestConnection hung")
+	}
+}
+
+func TestHTTPProxyTestConnection(t *testing.T) {
+	addr := httpConnectProxy(t)
+	testConnectionThroughHop(t, Hop{Type: "http", Host: hostOf(addr), Port: portOf(addr)})
+}
+
+func TestSocks5TestConnection(t *testing.T) {
+	socks := newMockSocks(t)
+	testConnectionThroughHop(t, Hop{Type: "socks5", Host: hostOf(socks.addr()), Port: portOf(socks.addr())})
+}
+
+func TestHTTPThenSocksTestConnection(t *testing.T) {
+	m := newMockManticore(t, "", "")
+	c := *newTestConn(m)
+	socks := newMockSocks(t)
+	httpAddr := httpConnectProxy(t)
+	c.Hops = []Hop{
+		{Type: "http", Host: hostOf(httpAddr), Port: portOf(httpAddr)},
+		{Type: "socks5", Host: hostOf(socks.addr()), Port: portOf(socks.addr())},
+	}
+	done := make(chan error, 1)
+	go func() {
+		r, err := ConnectionService{}.TestConnection(c)
+		if err != nil {
+			done <- err
+			return
+		}
+		if r == nil || r.Version != "9.2.14" {
+			done <- fmt.Errorf("result = %+v", r)
+			return
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("TestConnection hung")
+	}
+}
+
+func TestSSHHopTestConnection(t *testing.T) {
+	dialer.SetConfigDir(t.TempDir())
+	t.Cleanup(func() { dialer.SetConfigDir("") })
+	m := newMockManticore(t, "", "")
+	sshSrv := startSSHServer(t)
+
+	c := *newTestConn(m)
+	c.Hops = []Hop{{
+		Type:     "ssh",
+		Host:     hostOf(sshSrv.addr()),
+		Port:     portOf(sshSrv.addr()),
+		Username: "test",
+		AuthType: "password",
+		Password: "secret",
+	}}
+	r, err := ConnectionService{}.TestConnection(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r == nil || r.Version != "9.2.14" {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
+func TestConnectionsFollowConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	dialer.SetConfigDir(dir)
+	t.Cleanup(func() { dialer.SetConfigDir("") })
+
+	saved, err := connStore.upsert(Connection{Host: "127.0.0.1", Port: 9308, Name: "cfg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		dialer.SetConfigDir(dir)
+		_ = connStore.remove(saved.ID)
+	})
+	if _, err := os.Stat(filepath.Join(dir, "connections.json")); err != nil {
+		t.Fatal(err)
 	}
 }

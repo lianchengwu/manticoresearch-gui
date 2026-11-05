@@ -1,4 +1,4 @@
-package main
+package ddl
 
 import (
 	"strings"
@@ -155,7 +155,7 @@ func TestBuildSchemaChangesRejects(t *testing.T) {
 	if _, err := BuildSchemaChanges("t", []SchemaChange{{Action: "drop", Column: ColumnDef{Name: "id"}}}); err == nil {
 		t.Fatal("expected id drop rejection")
 	}
-	sql, err := buildCreateLike("copy", "products", true)
+	sql, err := BuildCreateLike("copy", "products", true)
 	if err != nil {
 		t.Fatal(err)
 	}

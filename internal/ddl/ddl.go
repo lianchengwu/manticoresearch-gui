@@ -1,4 +1,4 @@
-package main
+package ddl
 
 import (
 	"fmt"
@@ -88,6 +88,11 @@ var columnTypeSQL = map[string]string{
 	"float_vector": "float_vector",
 }
 
+// QuoteIdent wraps an SQL identifier with backticks and escapes embedded backticks.
+func QuoteIdent(name string) string {
+	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+}
+
 func validIdent(name string) bool {
 	if name == "@timestamp" || name == "@version" {
 		return true
@@ -124,12 +129,16 @@ func isASCIILetter(r rune) bool {
 	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
 }
 
-func checkIdent(name, what string) (string, error) {
+func CheckIdent(name, what string) (string, error) {
 	name = strings.TrimSpace(name)
 	if !validIdent(name) {
 		return "", fmt.Errorf("非法%s %q", what, name)
 	}
 	return name, nil
+}
+
+func checkIdent(name, what string) (string, error) {
+	return CheckIdent(name, what)
 }
 
 func quoteSQLString(s string) string {
@@ -186,7 +195,7 @@ func columnSQL(c ColumnDef) (string, error) {
 		return "", fmt.Errorf("不支持的列类型 %q", c.Type)
 	}
 	var b strings.Builder
-	b.WriteString(quoteIdent(name))
+	b.WriteString(QuoteIdent(name))
 	b.WriteByte(' ')
 	b.WriteString(typ)
 	if typ == "text" {
@@ -289,7 +298,7 @@ func BuildCreateTable(spec CreateTableSpec) (string, error) {
 	if spec.IfNotExists {
 		b.WriteString("IF NOT EXISTS ")
 	}
-	b.WriteString(quoteIdent(name))
+	b.WriteString(QuoteIdent(name))
 	switch kind {
 	case "rt", "pq":
 		if len(spec.Columns) == 0 {
@@ -383,7 +392,7 @@ func BuildSchemaChanges(table string, changes []SchemaChange) ([]string, error) 
 			if err != nil {
 				return nil, err
 			}
-			stmts = append(stmts, "ALTER TABLE "+quoteIdent(table)+" ADD COLUMN "+cs)
+			stmts = append(stmts, "ALTER TABLE "+QuoteIdent(table)+" ADD COLUMN "+cs)
 		case "drop":
 			name, err := checkIdent(ch.Column.Name, "列名")
 			if err != nil {
@@ -392,13 +401,13 @@ func BuildSchemaChanges(table string, changes []SchemaChange) ([]string, error) 
 			if strings.EqualFold(name, "id") {
 				return nil, fmt.Errorf("不能删除 id 列")
 			}
-			stmts = append(stmts, "ALTER TABLE "+quoteIdent(table)+" DROP COLUMN "+quoteIdent(name))
+			stmts = append(stmts, "ALTER TABLE "+QuoteIdent(table)+" DROP COLUMN "+QuoteIdent(name))
 		case "modify":
 			name, err := checkIdent(ch.Column.Name, "列名")
 			if err != nil {
 				return nil, err
 			}
-			stmts = append(stmts, "ALTER TABLE "+quoteIdent(table)+" MODIFY COLUMN "+quoteIdent(name)+" bigint")
+			stmts = append(stmts, "ALTER TABLE "+QuoteIdent(table)+" MODIFY COLUMN "+QuoteIdent(name)+" bigint")
 		case "setting":
 			parts, err := optionParts(ch.Settings)
 			if err != nil {
@@ -407,7 +416,7 @@ func BuildSchemaChanges(table string, changes []SchemaChange) ([]string, error) 
 			if len(parts) == 0 {
 				return nil, fmt.Errorf("全文设置不能为空")
 			}
-			stmts = append(stmts, "ALTER TABLE "+quoteIdent(table)+" "+strings.Join(parts, ", "))
+			stmts = append(stmts, "ALTER TABLE "+QuoteIdent(table)+" "+strings.Join(parts, ", "))
 		case "rename":
 			if rename != "" {
 				return nil, fmt.Errorf("一次只能重命名一次")
@@ -424,7 +433,7 @@ func BuildSchemaChanges(table string, changes []SchemaChange) ([]string, error) 
 		}
 	}
 	if rename != "" {
-		stmts = append(stmts, "ALTER TABLE "+quoteIdent(table)+" RENAME "+quoteIdent(rename))
+		stmts = append(stmts, "ALTER TABLE "+QuoteIdent(table)+" RENAME "+QuoteIdent(rename))
 	}
 	if len(stmts) == 0 {
 		return nil, fmt.Errorf("没有变更")
@@ -432,7 +441,8 @@ func BuildSchemaChanges(table string, changes []SchemaChange) ([]string, error) 
 	return stmts, nil
 }
 
-func buildCreateLike(name, like string, withData bool) (string, error) {
+// BuildCreateLike renders a CREATE TABLE ... LIKE statement.
+func BuildCreateLike(name, like string, withData bool) (string, error) {
 	name, err := checkIdent(name, "表名")
 	if err != nil {
 		return "", err
@@ -441,18 +451,20 @@ func buildCreateLike(name, like string, withData bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sql := "CREATE TABLE " + quoteIdent(name) + " LIKE " + quoteIdent(like)
+	sql := "CREATE TABLE " + QuoteIdent(name) + " LIKE " + QuoteIdent(like)
 	if withData {
 		sql += " WITH DATA"
 	}
 	return sql, nil
 }
 
-func previewErr(err error) *SQLPreview {
+// PreviewErr constructs an error SQLPreview.
+func PreviewErr(err error) *SQLPreview {
 	return &SQLPreview{SQLs: []string{}, Error: err.Error()}
 }
 
-func previewOK(sqls []string) *SQLPreview {
+// PreviewOK constructs a successful SQLPreview.
+func PreviewOK(sqls []string) *SQLPreview {
 	if sqls == nil {
 		sqls = []string{}
 	}

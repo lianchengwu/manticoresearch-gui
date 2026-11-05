@@ -12,6 +12,9 @@ import (
 	"time"
 
 	openapi "github.com/manticoresoftware/manticoresearch-go"
+	"manticoresearch-gui/internal/ddl"
+	"manticoresearch-gui/internal/dialer"
+	"manticoresearch-gui/internal/normalize"
 )
 
 // TableService covers table inspection, DDL, and document CRUD. Browsing uses
@@ -19,10 +22,6 @@ import (
 type TableService struct{}
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-func quoteIdent(name string) string {
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
-}
 
 func runSQL(conn *Connection, sql string) (*QueryResult, error) {
 	return QueryService{}.ExecuteSQL(conn.ID, sql)
@@ -94,7 +93,7 @@ func (t TableService) DescribeTable(connID, table string) (*QueryResult, error) 
 	if err != nil {
 		return nil, err
 	}
-	return runSQL(conn, "DESCRIBE "+quoteIdent(table))
+	return runSQL(conn, "DESCRIBE "+ddl.QuoteIdent(table))
 }
 
 // ShowCreateTable returns the full CREATE statement of a table.
@@ -103,7 +102,7 @@ func (t TableService) ShowCreateTable(connID, table string) (*QueryResult, error
 	if err != nil {
 		return nil, err
 	}
-	return runSQL(conn, "SHOW CREATE TABLE "+quoteIdent(table))
+	return runSQL(conn, "SHOW CREATE TABLE "+ddl.QuoteIdent(table))
 }
 
 // TruncateTable empties a table.
@@ -112,7 +111,7 @@ func (t TableService) TruncateTable(connID, table string) (*QueryResult, error) 
 	if err != nil {
 		return nil, err
 	}
-	return runSQL(conn, "TRUNCATE TABLE "+quoteIdent(table))
+	return runSQL(conn, "TRUNCATE TABLE "+ddl.QuoteIdent(table))
 }
 
 // DropTable deletes a table.
@@ -121,21 +120,21 @@ func (t TableService) DropTable(connID, table string) (*QueryResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return runSQL(conn, "DROP TABLE "+quoteIdent(table))
+	return runSQL(conn, "DROP TABLE "+ddl.QuoteIdent(table))
 }
 
 // RenderCreateTable returns the CREATE statement for a designer spec.
 func (t TableService) RenderCreateTable(spec CreateTableSpec) *SQLPreview {
-	sql, err := BuildCreateTable(spec)
+	sql, err := ddl.BuildCreateTable(spec)
 	if err != nil {
-		return previewErr(err)
+		return ddl.PreviewErr(err)
 	}
-	return previewOK([]string{sql})
+	return ddl.PreviewOK([]string{sql})
 }
 
 // CreateTable executes a designer spec.
 func (t TableService) CreateTable(connID string, spec CreateTableSpec) (*QueryResult, error) {
-	sql, err := BuildCreateTable(spec)
+	sql, err := ddl.BuildCreateTable(spec)
 	if err != nil {
 		return nil, err
 	}
@@ -148,17 +147,17 @@ func (t TableService) CreateTable(connID string, spec CreateTableSpec) (*QueryRe
 
 // RenderSchemaChanges returns the ALTER statements for a design session.
 func (t TableService) RenderSchemaChanges(table string, changes []SchemaChange) *SQLPreview {
-	sqls, err := BuildSchemaChanges(table, changes)
+	sqls, err := ddl.BuildSchemaChanges(table, changes)
 	if err != nil {
-		return previewErr(err)
+		return ddl.PreviewErr(err)
 	}
-	return previewOK(sqls)
+	return ddl.PreviewOK(sqls)
 }
 
 // ApplySchema runs ALTER statements in order and stops at the first error.
 // Statements before the failure are already applied.
 func (t TableService) ApplySchema(connID, table string, changes []SchemaChange) (*SchemaApplyResult, error) {
-	sqls, err := BuildSchemaChanges(table, changes)
+	sqls, err := ddl.BuildSchemaChanges(table, changes)
 	if err != nil {
 		return nil, err
 	}
@@ -187,41 +186,41 @@ func (t TableService) ApplySchema(connID, table string, changes []SchemaChange) 
 
 // OptimizeTable merges disk chunks.
 func (t TableService) OptimizeTable(connID, table string) (*QueryResult, error) {
-	return t.execIdent(connID, table, "OPTIMIZE TABLE "+quoteIdent(table))
+	return t.execIdent(connID, table, "OPTIMIZE TABLE "+ddl.QuoteIdent(table))
 }
 
 // FlushRamchunk converts the RAM chunk into a new disk chunk.
 func (t TableService) FlushRamchunk(connID, table string) (*QueryResult, error) {
-	return t.execIdent(connID, table, "FLUSH RAMCHUNK "+quoteIdent(table))
+	return t.execIdent(connID, table, "FLUSH RAMCHUNK "+ddl.QuoteIdent(table))
 }
 
 // FlushTable forces the RAM chunk to disk without rotating it.
 func (t TableService) FlushTable(connID, table string) (*QueryResult, error) {
-	return t.execIdent(connID, table, "FLUSH TABLE "+quoteIdent(table))
+	return t.execIdent(connID, table, "FLUSH TABLE "+ddl.QuoteIdent(table))
 }
 
 // ShowTableStatus returns SHOW TABLE … STATUS.
 func (t TableService) ShowTableStatus(connID, table string) (*QueryResult, error) {
-	return t.execIdent(connID, table, "SHOW TABLE "+quoteIdent(table)+" STATUS")
+	return t.execIdent(connID, table, "SHOW TABLE "+ddl.QuoteIdent(table)+" STATUS")
 }
 
 // ShowTableSettings returns SHOW TABLE … SETTINGS.
 func (t TableService) ShowTableSettings(connID, table string) (*QueryResult, error) {
-	return t.execIdent(connID, table, "SHOW TABLE "+quoteIdent(table)+" SETTINGS")
+	return t.execIdent(connID, table, "SHOW TABLE "+ddl.QuoteIdent(table)+" SETTINGS")
 }
 
 // RenameTable renames a real-time table.
 func (t TableService) RenameTable(connID, table, newName string) (*QueryResult, error) {
-	newName, err := checkIdent(newName, "新表名")
+	newName, err := ddl.CheckIdent(newName, "新表名")
 	if err != nil {
 		return nil, err
 	}
-	return t.execIdent(connID, table, "ALTER TABLE "+quoteIdent(table)+" RENAME "+quoteIdent(newName))
+	return t.execIdent(connID, table, "ALTER TABLE "+ddl.QuoteIdent(table)+" RENAME "+ddl.QuoteIdent(newName))
 }
 
 // CreateTableLike copies a table schema, optionally with data.
 func (t TableService) CreateTableLike(connID, name, like string, withData bool) (*QueryResult, error) {
-	sql, err := buildCreateLike(name, like, withData)
+	sql, err := ddl.BuildCreateLike(name, like, withData)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +232,7 @@ func (t TableService) CreateTableLike(connID, name, like string, withData bool) 
 }
 
 func (t TableService) execIdent(connID, table, sql string) (*QueryResult, error) {
-	if _, err := checkIdent(table, "表名"); err != nil {
+	if _, err := ddl.CheckIdent(table, "表名"); err != nil {
 		return nil, err
 	}
 	conn, err := connStore.get(connID)
@@ -279,11 +278,11 @@ func (t TableService) BrowseDocuments(connID string, opts BrowseOptions) (*Query
 		req.Sort = []map[string]any{{sortBy: map[string]string{"order": order}}}
 	}
 
-	client, err := buildClient(conn)
+	client, err := dialer.BuildClient(conn)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := callCtx(conn)
+	ctx, cancel := dialer.CallCtx(conn)
 	defer cancel()
 
 	start := time.Now()
@@ -296,7 +295,7 @@ func (t TableService) BrowseDocuments(connID string, opts BrowseOptions) (*Query
 	if err != nil {
 		return nil, err
 	}
-	res := normalizeBody(body)
+	res := normalize.NormalizeBody(body)
 	res.TookMs = took
 	return res, nil
 }
@@ -313,7 +312,7 @@ func (t TableService) GetDocument(connID, table, id string) (*QueryResult, error
 	} else {
 		where = "'" + strings.ReplaceAll(id, "'", "''") + "'"
 	}
-	return runSQL(conn, fmt.Sprintf("SELECT * FROM %s WHERE id = %s", quoteIdent(table), where))
+	return runSQL(conn, fmt.Sprintf("SELECT * FROM %s WHERE id = %s", ddl.QuoteIdent(table), where))
 }
 
 // InsertDocument adds a document; id may be empty for auto-assignment.
@@ -330,11 +329,11 @@ func (t TableService) InsertDocument(connID, table string, id string, doc map[st
 		n, _ := strconv.ParseUint(id, 10, 64)
 		req.Id = &n
 	}
-	client, err := buildClient(conn)
+	client, err := dialer.BuildClient(conn)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := callCtx(conn)
+	ctx, cancel := dialer.CallCtx(conn)
 	defer cancel()
 	resp, _, err := client.IndexAPI.Insert(ctx).InsertDocumentRequest(req).Execute()
 	if err != nil {
@@ -361,11 +360,11 @@ func (t TableService) ReplaceDocument(connID, table, id string, doc map[string]a
 		return nil, errors.New("文档内容不能为空")
 	}
 	req := openapi.InsertDocumentRequest{Table: table, Doc: doc, Id: &n}
-	client, err := buildClient(conn)
+	client, err := dialer.BuildClient(conn)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := callCtx(conn)
+	ctx, cancel := dialer.CallCtx(conn)
 	defer cancel()
 	resp, _, err := client.IndexAPI.Replace(ctx).InsertDocumentRequest(req).Execute()
 	if err != nil {
@@ -392,11 +391,11 @@ func (t TableService) UpdateDocument(connID, table, id string, doc map[string]an
 		return nil, errors.New("文档内容不能为空")
 	}
 	req := openapi.UpdateDocumentRequest{Table: table, Doc: doc, Id: &n}
-	client, err := buildClient(conn)
+	client, err := dialer.BuildClient(conn)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := callCtx(conn)
+	ctx, cancel := dialer.CallCtx(conn)
 	defer cancel()
 	resp, _, err := client.IndexAPI.Update(ctx).UpdateDocumentRequest(req).Execute()
 	if err != nil {
@@ -422,11 +421,11 @@ func (t TableService) DeleteDocument(connID, table, id string) (*MutationResult,
 	} else {
 		req.Query = map[string]any{"equals": map[string]any{"id": id}}
 	}
-	client, err := buildClient(conn)
+	client, err := dialer.BuildClient(conn)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := callCtx(conn)
+	ctx, cancel := dialer.CallCtx(conn)
 	defer cancel()
 	resp, _, err := client.IndexAPI.Delete(ctx).DeleteDocumentRequest(req).Execute()
 	if err != nil {

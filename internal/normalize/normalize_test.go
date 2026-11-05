@@ -1,4 +1,4 @@
-package main
+package normalize
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 
 func TestNormalizeBodyArrayRows(t *testing.T) {
 	body := []byte(`[{"id":1,"title":"hello","tags":[1,2],"meta":{"k":"v"}},{"id":2,"title":"world"}]`)
-	res := normalizeBody(body)
+	res := NormalizeBody(body)
 	if res.Error != "" {
 		t.Fatalf("unexpected error: %s", res.Error)
 	}
@@ -39,7 +39,7 @@ func TestNormalizeBodyArrayRows(t *testing.T) {
 
 func TestNormalizeBodyHitsShape(t *testing.T) {
 	body := []byte(`{"took":3,"hits":{"total":12,"hits":[{"_id":"7","_score":1,"_source":{"title":"a","year":2020}},{"_id":"8","_score":2,"_source":{"title":"b","year":2021}}]}}`)
-	res := normalizeBody(body)
+	res := NormalizeBody(body)
 	if res.Error != "" {
 		t.Fatalf("unexpected error: %s", res.Error)
 	}
@@ -56,7 +56,7 @@ func TestNormalizeBodyHitsShape(t *testing.T) {
 
 func TestNormalizeBodyColumnsData(t *testing.T) {
 	body := []byte(`{"columns":[{"Field":{"type":"string"}},{"Type":{"type":"string"}}],"data":[{"Field":"title","Type":"text"}]}`)
-	res := normalizeBody(body)
+	res := NormalizeBody(body)
 	if res.Error != "" {
 		t.Fatalf("unexpected error: %s", res.Error)
 	}
@@ -67,9 +67,10 @@ func TestNormalizeBodyColumnsData(t *testing.T) {
 		t.Fatalf("rows = %v", res.Rows)
 	}
 }
+
 func TestNormalizeBodySQLEnvelopeArray(t *testing.T) {
 	body := []byte(`[{"columns":[{"Table":{"type":"string"}},{"Type":{"type":"string"}}],"data":[{"Table":"products","Type":"rt"},{"Table":"alerts","Type":"percolate"}],"total":2,"error":"","warning":""}]`)
-	res := normalizeBody(body)
+	res := NormalizeBody(body)
 	if res.Error != "" {
 		t.Fatal(res.Error)
 	}
@@ -82,18 +83,18 @@ func TestNormalizeBodySQLEnvelopeArray(t *testing.T) {
 }
 
 func TestNormalizeBodyErrorObjectAndText(t *testing.T) {
-	res := normalizeBody([]byte(`{"error":"P01: syntax error, unexpected X"}`))
+	res := NormalizeBody([]byte(`{"error":"P01: syntax error, unexpected X"}`))
 	if res.Error == "" {
 		t.Fatal("expected error")
 	}
-	res = normalizeBody([]byte("ERROR 1064 (42000): sphinxql: syntax error near 'foo'"))
+	res = NormalizeBody([]byte("ERROR 1064 (42000): sphinxql: syntax error near 'foo'"))
 	if res.Error == "" {
 		t.Fatal("expected plain-text error")
 	}
 }
 
 func TestNormalizeBodyInsertAck(t *testing.T) {
-	res := normalizeBody([]byte(`{"total":0,"error":"","warning":""}`))
+	res := NormalizeBody([]byte(`{"total":0,"error":"","warning":""}`))
 	if res.Error != "" {
 		t.Fatalf("unexpected error: %s", res.Error)
 	}

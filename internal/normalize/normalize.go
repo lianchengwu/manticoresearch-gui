@@ -1,4 +1,4 @@
-package main
+package normalize
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"manticoresearch-gui/internal/model"
 )
 
 // onode is a decoded JSON node that preserves object key order, so the data
@@ -23,10 +25,6 @@ func (n *onode) get(key string) *onode {
 		return nil
 	}
 	return n.vals[key]
-}
-
-func (n *onode) isEmptyObj() bool {
-	return n != nil && n.isObj && len(n.keys) == 0
 }
 
 // MarshalJSON re-encodes the node preserving key order; nested objects and
@@ -156,10 +154,10 @@ func decodeFromToken(dec *json.Decoder, tok json.Token) (*onode, error) {
 	return &onode{scalar: tok}, nil
 }
 
-// normalizeBody converts a raw Manticore JSON response (any of its several
+// NormalizeBody converts a raw Manticore JSON response (any of its several
 // shapes) into the uniform QueryResult.
-func normalizeBody(body []byte) *QueryResult {
-	res := &QueryResult{}
+func NormalizeBody(body []byte) *model.QueryResult {
+	res := &model.QueryResult{}
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 {
 		res.Message = "OK"
@@ -217,8 +215,8 @@ func firstLineText(body []byte) string {
 	return strings.TrimSpace(text)
 }
 
-func nodeToResult(n *onode) *QueryResult {
-	res := &QueryResult{}
+func nodeToResult(n *onode) *model.QueryResult {
+	res := &model.QueryResult{}
 	switch {
 	case n == nil:
 		res.Message = "OK"
@@ -236,7 +234,7 @@ func nodeToResult(n *onode) *QueryResult {
 	return res
 }
 
-func fillTableFromArray(res *QueryResult, n *onode) {
+func fillTableFromArray(res *model.QueryResult, n *onode) {
 	if len(n.arr) == 0 {
 		res.Message = "OK (0 rows)"
 		return
@@ -249,7 +247,7 @@ func fillTableFromArray(res *QueryResult, n *onode) {
 			if !isSQLResultSet(el) {
 				continue
 			}
-			partial := &QueryResult{}
+			partial := &model.QueryResult{}
 			fillTableFromObject(partial, el)
 			if partial.Error != "" {
 				res.Error = partial.Error
@@ -293,7 +291,7 @@ func isSQLResultSet(n *onode) bool {
 }
 
 // fillTableFromObject dispatches on the known response shapes.
-func fillTableFromObject(res *QueryResult, n *onode) {
+func fillTableFromObject(res *model.QueryResult, n *onode) {
 	// Search API shape: {"hits": {"hits": [...], "total": N}, "took": ...}
 	if h := n.get("hits"); h != nil && h.isObj {
 		if inner := h.get("hits"); inner != nil && inner.arr != nil {
@@ -371,7 +369,7 @@ func fillTableFromObject(res *QueryResult, n *onode) {
 
 // fromSearchHits builds a grid from Search API hits: id, _score, then the
 // document source fields in server order.
-func fromSearchHits(res *QueryResult, hits []*onode) {
+func fromSearchHits(res *model.QueryResult, hits []*onode) {
 	cols := []string{"id", "_score"}
 	for _, h := range hits {
 		src := h.get("_source")
@@ -408,7 +406,7 @@ func fromSearchHits(res *QueryResult, hits []*onode) {
 	}
 }
 
-func fillRowTable(res *QueryResult, objs []*onode) {
+func fillRowTable(res *model.QueryResult, objs []*onode) {
 	var cols []string
 	for _, o := range objs {
 		for _, k := range o.keys {

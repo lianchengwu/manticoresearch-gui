@@ -5,29 +5,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"manticoresearch-gui/internal/dialer"
 )
-
-// configDirOverride lets tests redirect the config directory.
-var configDirOverride string
-
-func appConfigDir() string {
-	if configDirOverride != "" {
-		return configDirOverride
-	}
-	base, err := os.UserConfigDir()
-	if err != nil {
-		home, _ := os.UserHomeDir()
-		base = filepath.Join(home, ".config")
-	}
-	dir := filepath.Join(base, "manticoresearch-gui")
-	_ = os.MkdirAll(dir, 0o700)
-	return dir
-}
 
 // ---------------------------------------------------------------------------
 // Connection store
@@ -40,7 +28,7 @@ type connStoreT struct {
 var connStore = &connStoreT{}
 
 func (s *connStoreT) path() string {
-	return filepath.Join(appConfigDir(), "connections.json")
+	return filepath.Join(dialer.ConfigDir(), "connections.json")
 }
 
 func (s *connStoreT) all() ([]Connection, error) {
@@ -68,7 +56,7 @@ func (s *connStoreT) load() error {
 		return err
 	}
 	for i := range s.conns {
-		s.conns[i].migrateNet()
+		s.conns[i].MigrateNet()
 	}
 	return nil
 }
@@ -96,7 +84,7 @@ func (s *connStoreT) upsert(c Connection) (Connection, error) {
 		c.Port = 9308
 	}
 	if c.Name == "" {
-		c.Name = fmt.Sprintf("%s:%d", c.Host, c.Port)
+		c.Name = net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 	}
 	if c.ID == "" {
 		id := make([]byte, 8)
@@ -110,7 +98,7 @@ func (s *connStoreT) upsert(c Connection) (Connection, error) {
 		for i := range s.conns {
 			if s.conns[i].ID == c.ID {
 				// network config changed: drop cached HTTP clients
-				invalidateClient(fingerprint(&s.conns[i]))
+				dialer.InvalidateClient(&s.conns[i])
 				s.conns[i] = c
 				found = true
 				break
@@ -134,7 +122,7 @@ func (s *connStoreT) remove(id string) error {
 		if c.ID != id {
 			out = append(out, c)
 		} else {
-			invalidateClient(fingerprint(&c))
+			dialer.InvalidateClient(&c)
 		}
 	}
 	s.conns = out
@@ -236,11 +224,11 @@ func (ConnectionService) TestConnection(c Connection) (*TestResult, error) {
 			}
 		}
 	}
-	client, err := buildClient(&c)
+	client, err := dialer.BuildClient(&c)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := callCtx(&c)
+	ctx, cancel := dialer.CallCtx(&c)
 	defer cancel()
 	start := time.Now()
 	resp, _, err := client.UtilsAPI.Sql(ctx).Body("SELECT version()").Execute()
@@ -265,11 +253,32 @@ func (ConnectionService) TestConnection(c Connection) (*TestResult, error) {
 
 // ClearSSHHostKey removes the stored host key fingerprint for an SSH server.
 func (ConnectionService) ClearSSHHostKey(host string, port int) error {
-	return ClearSSHHostKey(host, port)
+	return dialer.ClearSSHHostKey(host, port)
 }
 
 func (ConnectionService) PickKeyFile() (string, error) {
 	return pickKeyFile()
+}
+
+func pickKeyFile() (string, error) {
+	app := application.Get()
+	if app == nil {
+		return "", fmt.Errorf("application not ready")
+	}
+	return app.Dialog.OpenFile().
+		CanChooseFiles(true).
+		CanChooseDirectories(false).
+		SetTitle("选择 SSH 私钥").
+		PromptForSingleSelection()
+}
+
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
+		}
+	}
+	return p
 }
 
 func viaDescription(c *Connection) string {

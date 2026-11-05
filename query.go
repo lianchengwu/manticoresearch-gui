@@ -7,6 +7,8 @@ import (
 	"time"
 
 	openapi "github.com/manticoresoftware/manticoresearch-go"
+	"manticoresearch-gui/internal/dialer"
+	"manticoresearch-gui/internal/normalize"
 )
 
 // QueryService executes raw SQL against a Manticore server and normalizes
@@ -22,11 +24,11 @@ func (QueryService) ExecuteSQL(connID string, sql string) (*QueryResult, error) 
 	if sql == "" {
 		return nil, errors.New("empty query")
 	}
-	client, err := buildClient(conn)
+	client, err := dialer.BuildClient(conn)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := callCtx(conn)
+	ctx, cancel := dialer.CallCtx(conn)
 	defer cancel()
 
 	start := time.Now()
@@ -39,7 +41,7 @@ func (QueryService) ExecuteSQL(connID string, sql string) (*QueryResult, error) 
 	if err != nil {
 		return nil, err
 	}
-	res := normalizeBody(body)
+	res := normalize.NormalizeBody(body)
 	res.TookMs = took
 	return res, nil
 }
@@ -51,7 +53,7 @@ func normalizeOrError(err error, tookMs float64) (*QueryResult, error) {
 	res := &QueryResult{TookMs: tookMs}
 	var gerr *openapi.GenericOpenAPIError
 	if errors.As(err, &gerr) {
-		normalized := normalizeBody(gerr.Body())
+		normalized := normalize.NormalizeBody(gerr.Body())
 		switch {
 		case normalized.Error != "":
 			res.Error = normalized.Error
